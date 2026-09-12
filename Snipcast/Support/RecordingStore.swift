@@ -40,6 +40,22 @@ enum RecordingStore {
         return candidate
     }
 
+    /// Every file a review session produced for one recording: the capture plus its trimmed
+    /// export, if one was written. Order is stable so callers can report the first failure.
+    static func filesToDiscard(source: URL, exported: URL?) -> [URL] {
+        guard let exported, exported != source else { return [source] }
+        return [source, exported]
+    }
+
+    /// Moves a recording (and its trimmed export) to the Trash so a bad take is recoverable.
+    /// Files that no longer exist are skipped rather than treated as errors.
+    static func discard(source: URL, exported: URL?) throws {
+        let fm = FileManager.default
+        for url in filesToDiscard(source: source, exported: exported) where fm.fileExists(atPath: url.path) {
+            try fm.trashItem(at: url, resultingItemURL: nil)
+        }
+    }
+
     static func fileSize(of url: URL) -> Int64 {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0

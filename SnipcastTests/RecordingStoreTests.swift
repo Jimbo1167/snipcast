@@ -15,6 +15,19 @@ struct RecordingStoreTests {
         #expect(RecordingStore.trimmedURL(for: src).lastPathComponent == "Snipcast 2026-09-12 at 14.03.07 trimmed.mp4")
     }
 
+    @Test func discardCoversSourceAndTrimmedExport() {
+        let src = URL(fileURLWithPath: "/tmp/nowhere/a.mp4")
+        let trimmed = URL(fileURLWithPath: "/tmp/nowhere/a trimmed.mp4")
+        #expect(RecordingStore.filesToDiscard(source: src, exported: nil) == [src])
+        #expect(RecordingStore.filesToDiscard(source: src, exported: trimmed) == [src, trimmed])
+        #expect(RecordingStore.filesToDiscard(source: src, exported: src) == [src])
+    }
+
+    @Test func discardSkipsFilesThatAreAlreadyGone() throws {
+        let missing = URL(fileURLWithPath: "/tmp/nowhere/\(UUID().uuidString).mp4")
+        try RecordingStore.discard(source: missing, exported: nil)
+    }
+
     @Test func messagesLimitIsRoughlyOneHundredMegabytes() {
         #expect(!RecordingStore.exceedsMessagesLimit(99_000_000))
         #expect(RecordingStore.exceedsMessagesLimit(101_000_000))

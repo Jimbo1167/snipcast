@@ -17,6 +17,9 @@ final class EditorModel: ObservableObject {
     @Published var errorMessage: String?
     @Published private(set) var sourceSize: Int64
 
+    /// Set by the owning window controller; called once the recording has been discarded.
+    var dismiss: (() -> Void)?
+
     init(url: URL) {
         sourceURL = url
         player = AVPlayer(url: url)
@@ -94,6 +97,20 @@ final class EditorModel: ObservableObject {
         }
     }
 
+    /// Throws away a bad take: pauses playback, releases the file, moves the recording and
+    /// any trimmed export to the Trash, then closes the window.
+    func discard() {
+        player.pause()
+        player.replaceCurrentItem(with: nil)
+        do {
+            try RecordingStore.discard(source: sourceURL, exported: exportedURL)
+            dismiss?()
+        } catch {
+            player.replaceCurrentItem(with: AVPlayerItem(url: sourceURL))
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private func format(_ t: CMTime) -> String {
         let s = max(0, t.seconds)
         return String(format: "%d:%04.1f", Int(s) / 60, s.truncatingRemainder(dividingBy: 60))
@@ -143,6 +160,10 @@ struct EditorView: View {
                     ProgressView().controlSize(.small)
                     Text("Exporting…").foregroundStyle(.secondary).font(.callout)
                 }
+                Button("Move to Trash", role: .destructive) { model.discard() }
+                    .disabled(model.isTrimming || model.isExporting)
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .help("Throw away this take. The file is moved to the Trash, so it can be recovered.")
                 Button("Trim") { model.beginTrim() }
                     .disabled(model.isTrimming || model.isExporting)
                     .keyboardShortcut("t", modifiers: .command)
@@ -188,6 +209,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
         super.init(window: window)
         window.delegate = self
         retain = self
+        model.dismiss = { [weak self] in self?.window?.close() }
     }
 
     @available(*, unavailable)
