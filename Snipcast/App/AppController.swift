@@ -42,7 +42,7 @@ final class AppController: ObservableObject {
     func toggle() async {
         switch phase {
         case .idle: await startWithSelection()
-        case .selecting: selector.cancel()
+        case .selecting: selector.confirm()
         case .recording: await stop()
         case .finishing: break
         }
@@ -66,6 +66,11 @@ final class AppController: ObservableObject {
             ? last.displayID
             : (NSScreen.main?.displayID ?? last.displayID)
         await beginRecording(RegionSelection(rect: last.rect, displayID: displayID))
+    }
+
+    func cancelSelection() {
+        guard phase == .selecting else { return }
+        selector.cancel()
     }
 
     func stop() async {

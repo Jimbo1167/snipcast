@@ -54,3 +54,32 @@ struct RegionMathTests {
         #expect(edge == CGPoint(x: 840, y: 256))
     }
 }
+
+struct EditableRegionTests {
+    let rect = CGRect(x: 100, y: 100, width: 200, height: 100)
+
+    @Test func handlesSitOnEdgesAndCorners() {
+        #expect(RegionMath.Handle.topLeft.point(in: rect) == CGPoint(x: 100, y: 200))
+        #expect(RegionMath.Handle.bottom.point(in: rect) == CGPoint(x: 200, y: 100))
+        #expect(RegionMath.handle(at: CGPoint(x: 305, y: 150), in: rect) == .right)
+        #expect(RegionMath.handle(at: CGPoint(x: 200, y: 150), in: rect) == nil)
+    }
+
+    @Test func resizeKeepsOppositeEdgesFixed() {
+        let r = RegionMath.resize(rect, handle: .right, to: CGPoint(x: 350, y: 999))
+        #expect(r == CGRect(x: 100, y: 100, width: 250, height: 100))
+        let c = RegionMath.resize(rect, handle: .topLeft, to: CGPoint(x: 50, y: 250))
+        #expect(c == CGRect(x: 50, y: 100, width: 250, height: 150))
+    }
+
+    @Test func resizePastFarEdgeFlipsInsteadOfGoingNegative() {
+        let r = RegionMath.resize(rect, handle: .left, to: CGPoint(x: 340, y: 0))
+        #expect(r == CGRect(x: 300, y: 100, width: 40, height: 100))
+    }
+
+    @Test func moveStaysInsideBounds() {
+        let bounds = CGRect(x: 0, y: 0, width: 400, height: 300)
+        let r = RegionMath.move(rect, by: CGPoint(x: 500, y: -500), within: bounds)
+        #expect(r == CGRect(x: 200, y: 0, width: 200, height: 100))
+    }
+}

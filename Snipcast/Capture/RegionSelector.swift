@@ -38,6 +38,15 @@ final class RegionSelector {
 
     func cancel() { finish(nil) }
 
+    /// Starts recording with whatever region is currently shown, if any; otherwise cancels.
+    func confirm() {
+        if let view = windows.compactMap({ $0.contentView as? SelectionView }).first(where: { $0.region != nil }) {
+            view.confirm()
+        } else {
+            cancel()
+        }
+    }
+
     private func finish(_ result: RegionSelection?) {
         for w in windows { w.orderOut(nil) }
         windows.removeAll()
@@ -74,12 +83,22 @@ final class SelectionWindow: NSWindow {
 
 final class SelectionView: NSView {
     var displayID: CGDirectDisplayID = 0
-    var suggested: CGRect?
+    var suggested: CGRect? { didSet { region = suggested } }
     var onComplete: (@MainActor (RegionSelection?) -> Void)?
 
-    private var dragStart: CGPoint?
-    private var current: CGRect?
+    /// The editable rectangle, in view coordinates. Nil until the user drags one out.
+    private(set) var region: CGRect?
+
+    private enum Drag {
+        case create(start: CGPoint)
+        case move(grab: CGPoint, original: CGRect)
+        case resize(RegionMath.Handle, anchor: CGRect)
+    }
+    private var drag: Drag?
     private var trackingArea: NSTrackingArea?
+
+    private let buttonSize = CGSize(width: 96, height: 26)
+    private let labelFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
 
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -87,90 +106,175 @@ final class SelectionView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .cursorUpdate, .inVisibleRect], owner: self)
+        let area = NSTrackingArea(rect: bounds, options: [.activeAlways, .mouseMoved, .inVisibleRect], owner: self)
         addTrackingArea(area)
         trackingArea = area
     }
 
-    override func cursorUpdate(with event: NSEvent) { NSCursor.crosshair.set() }
+    // MARK: Confirm / cancel
+
+    func confirm() {
+        guard let region, RegionMath.isUsableSelection(region), let window else { return }
+        onComplete?(RegionSelection(rect: window.convertToScreen(region), displayID: displayID))
+    }
+
+    // MARK: Mouse
+
+    override func mouseMoved(with event: NSEvent) {
+        updateCursor(at: convert(event.locationInWindow, from: nil))
+    }
 
     override func mouseDown(with event: NSEvent) {
         window?.makeKey()
-        dragStart = convert(event.locationInWindow, from: nil)
-        current = nil
+        let p = convert(event.locationInWindow, from: nil)
+        if let region {
+            if recordButtonRect(for: region).contains(p) {
+                confirm(); return
+            }
+            if let handle = RegionMath.handle(at: p, in: region) {
+                drag = .resize(handle, anchor: region)
+            } else if region.contains(p) {
+                if event.clickCount == 2 { confirm(); return }
+                drag = .move(grab: p, original: region)
+            } else {
+                drag = .create(start: p)
+                self.region = nil
+            }
+        } else {
+            drag = .create(start: p)
+        }
         needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let dragStart else { return }
         let p = convert(event.locationInWindow, from: nil)
-        current = RegionMath.dragRect(from: dragStart, to: p).intersection(bounds)
+        switch drag {
+        case .create(let start):
+            region = RegionMath.dragRect(from: start, to: p).intersection(bounds)
+        case .move(let grab, let original):
+            region = RegionMath.move(original, by: CGPoint(x: p.x - grab.x, y: p.y - grab.y), within: bounds)
+        case .resize(let handle, let anchor):
+            region = RegionMath.resize(anchor, handle: handle, to: p).intersection(bounds)
+        case nil:
+            return
+        }
         needsDisplay = true
     }
 
     override func mouseUp(with event: NSEvent) {
-        defer { dragStart = nil; current = nil; needsDisplay = true }
-        if let current, RegionMath.isUsableSelection(current) {
-            complete(current)
-        } else if let suggested, let dragStart, suggested.contains(dragStart) {
-            complete(suggested)
-        } else {
-            onComplete?(nil)
+        defer { drag = nil; needsDisplay = true; updateCursor(at: convert(event.locationInWindow, from: nil)) }
+        if case .create = drag, let region, !RegionMath.isUsableSelection(region) {
+            // A plain click on empty space clears the selection rather than leaving a sliver.
+            self.region = nil
         }
     }
 
+    // MARK: Keys
+
     override func keyDown(with event: NSEvent) {
+        let shift = event.modifierFlags.contains(.shift)
+        let step: CGFloat = shift ? 10 : 1
         switch event.keyCode {
-        case 53: onComplete?(nil)                       // Escape
-        case 36, 76: if let suggested { complete(suggested) } // Return / Enter
+        case 53: onComplete?(nil)                            // Escape
+        case 36, 76: confirm()                               // Return / Enter
+        case 123: nudge(dx: -step, dy: 0)                    // ←
+        case 124: nudge(dx: step, dy: 0)                     // →
+        case 125: nudge(dx: 0, dy: -step)                    // ↓
+        case 126: nudge(dx: 0, dy: step)                     // ↑
         default: super.keyDown(with: event)
         }
     }
 
-    private func complete(_ localRect: CGRect) {
-        guard let window else { return }
-        let screenRect = window.convertToScreen(localRect)
-        onComplete?(RegionSelection(rect: screenRect, displayID: displayID))
+    private func nudge(dx: CGFloat, dy: CGFloat) {
+        guard let region else { return }
+        self.region = RegionMath.move(region, by: CGPoint(x: dx, y: dy), within: bounds)
+        needsDisplay = true
     }
+
+    // MARK: Cursor
+
+    private func updateCursor(at p: CGPoint) {
+        guard let region else { NSCursor.crosshair.set(); return }
+        if recordButtonRect(for: region).contains(p) { NSCursor.pointingHand.set(); return }
+        switch RegionMath.handle(at: p, in: region) {
+        case .left, .right: NSCursor.resizeLeftRight.set()
+        case .top, .bottom: NSCursor.resizeUpDown.set()
+        case .some: NSCursor.crosshair.set()
+        case nil:
+            if region.contains(p) {
+                if case .move = drag { NSCursor.closedHand.set() } else { NSCursor.openHand.set() }
+            } else {
+                NSCursor.crosshair.set()
+            }
+        }
+    }
+
+    // MARK: Layout
+
+    private func recordButtonRect(for rect: CGRect) -> CGRect {
+        let gap: CGFloat = 8
+        var origin = CGPoint(x: rect.maxX - buttonSize.width, y: rect.minY - gap - buttonSize.height)
+        if origin.y < bounds.minY + 4 { origin.y = rect.maxY + gap }
+        origin.x = min(max(origin.x, bounds.minX + 4), bounds.maxX - buttonSize.width - 4)
+        return CGRect(origin: origin, size: buttonSize)
+    }
+
+    // MARK: Drawing
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.28).setFill()
         bounds.fill()
 
-        if let current, RegionMath.isUsableSelection(current) {
-            drawSelection(current, color: .white, dashed: false, label: sizeLabel(current))
-        } else if let suggested {
-            drawSelection(suggested, color: .white, dashed: true, label: "\(sizeLabel(suggested))  ·  Return to reuse, drag to change")
-        } else {
+        guard let region, region.width > 0, region.height > 0 else {
             drawHint("Drag to select an area  ·  Esc to cancel")
+            return
         }
-    }
 
-    private func drawSelection(_ rect: CGRect, color: NSColor, dashed: Bool, label: String) {
         NSColor.clear.setFill()
-        rect.fill(using: .copy)
-        let path = NSBezierPath(rect: rect.insetBy(dx: -0.5, dy: -0.5))
-        path.lineWidth = 1
-        if dashed { path.setLineDash([6, 4], count: 2, phase: 0) }
-        color.setStroke()
-        path.stroke()
-        drawLabel(label, near: rect)
+        region.fill(using: .copy)
+
+        let border = NSBezierPath(rect: region.insetBy(dx: -0.5, dy: -0.5))
+        border.lineWidth = 1
+        NSColor.white.setStroke()
+        border.stroke()
+
+        let usable = RegionMath.isUsableSelection(region)
+        let isDragging = drag != nil
+        if usable && !isDragging {
+            for h in RegionMath.Handle.allCases {
+                let c = h.point(in: region)
+                let r = CGRect(x: c.x - 4, y: c.y - 4, width: 8, height: 8)
+                NSColor.white.setFill()
+                NSBezierPath(ovalIn: r).fill()
+                NSColor.black.withAlphaComponent(0.6).setStroke()
+                NSBezierPath(ovalIn: r).stroke()
+            }
+            drawRecordButton(recordButtonRect(for: region))
+        }
+
+        let label = "\(Int(region.width)) × \(Int(region.height))"
+        drawLabel(usable ? label : "\(label)  ·  too small", near: region)
     }
 
-    private func sizeLabel(_ rect: CGRect) -> String {
-        "\(Int(rect.width)) × \(Int(rect.height))"
+    private func drawRecordButton(_ rect: CGRect) {
+        NSColor.systemRed.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+            .foregroundColor: NSColor.white,
+        ]
+        let str = NSAttributedString(string: "Record  ⏎", attributes: attrs)
+        let size = str.size()
+        str.draw(at: CGPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2))
     }
 
     private func drawLabel(_ text: String, near rect: CGRect) {
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.white,
-        ]
+        let attrs: [NSAttributedString.Key: Any] = [.font: labelFont, .foregroundColor: NSColor.white]
         let str = NSAttributedString(string: text, attributes: attrs)
         let size = str.size()
         let pad: CGFloat = 6
-        var origin = CGPoint(x: rect.minX, y: rect.minY - size.height - pad * 2 - 4)
-        if origin.y < bounds.minY { origin.y = rect.maxY + 4 }
+        var origin = CGPoint(x: rect.minX, y: rect.minY - size.height - pad * 2 - 8)
+        if origin.y < bounds.minY + 4 { origin.y = rect.maxY + 8 }
         origin.x = min(max(origin.x, bounds.minX + 4), bounds.maxX - size.width - pad * 2 - 4)
         let box = CGRect(x: origin.x, y: origin.y, width: size.width + pad * 2, height: size.height + pad * 2)
         NSColor.black.withAlphaComponent(0.7).setFill()

@@ -53,8 +53,9 @@ struct MenuContent: View {
         case .finishing:
             Text("Finishing…")
         case .selecting:
-            Button("Cancel Selection") { Task { await controller.toggle() } }
+            Button("Start Recording") { Task { await controller.toggle() } }
                 .globalKeyboardShortcut(.toggleRecording)
+            Button("Cancel Selection") { controller.cancelSelection() }
         case .idle:
             Button("Record Area…") { Task { await controller.startWithSelection() } }
                 .globalKeyboardShortcut(.toggleRecording)
