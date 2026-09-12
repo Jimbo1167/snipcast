@@ -44,6 +44,7 @@ struct MenuBarLabel: View {
 
 struct MenuContent: View {
     @ObservedObject var controller: AppController
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         switch controller.phase {
@@ -65,8 +66,13 @@ struct MenuContent: View {
         }
         Divider()
         Button("Open Recordings Folder") { controller.openRecordingsFolder() }
-        SettingsLink { Text("Settings…") }
-            .keyboardShortcut(",", modifiers: .command)
+        // An LSUIElement app is never the active app while its menu is open, so a plain
+        // SettingsLink opens the window behind whatever is frontmost. Activate first.
+        Button("Settings…") {
+            NSApp.activate(ignoringOtherApps: true)
+            openSettings()
+        }
+        .keyboardShortcut(",", modifiers: .command)
         Divider()
         Button("Quit Snipcast") { NSApp.terminate(nil) }
             .keyboardShortcut("q", modifiers: .command)
