@@ -5,6 +5,20 @@ import SwiftUI
 struct SnipcastApp: App {
     @StateObject private var controller = AppController()
 
+    init() {
+        if let request = Probe.parse(CommandLine.arguments) {
+            Task { @MainActor in
+                let code = await Probe.run(request)
+                exit(code)
+            }
+        } else if let url = Probe.editURL(CommandLine.arguments) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(300))
+                EditorWindowController(url: url).present()
+            }
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuContent(controller: controller)
