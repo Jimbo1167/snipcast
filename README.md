@@ -3,9 +3,12 @@
 A macOS menu bar app for recording a region of the screen with one hotkey, trimming it,
 and sending the file at full quality through Messages.
 
-**Flow:** press the hotkey (default ⌃⇧R) → drag a rectangle (or press Return to reuse the
-last one) → press the hotkey again or click Stop → trim in the review window → **Send with
-Messages**.
+**Flow:** press the hotkey (default ⌃⇧R) → click a window to snap to it, drag a rectangle,
+or press Return to reuse the last one → press the hotkey again or click Stop → trim in the
+review window → **Send with Messages**.
+
+While selecting, the window under the cursor is highlighted, and dragged, moved, or resized
+edges snap to window and screen edges. Hold ⌘ to place edges freely.
 
 ## Requirements
 
@@ -29,6 +32,31 @@ xcodebuild -project Snipcast.xcodeproj -scheme Snipcast -derivedDataPath build/D
 ```
 
 The `.xcodeproj` is generated and gitignored; edit `project.yml` instead.
+
+### Testing the latest build
+
+The copy in `/Applications` doesn't update when you rebuild. Every running Snipcast also
+registers the same global hotkey, so an old copy can silently answer ⌃⇧R. To test current
+`main`, quit every copy, build Release, replace the installed app, and launch only that:
+
+```bash
+pkill -x Snipcast
+xcodegen generate
+xcodebuild -project Snipcast.xcodeproj -scheme Snipcast -configuration Release -derivedDataPath build/DerivedData build
+rm -rf /Applications/Snipcast.app
+ditto build/DerivedData/Build/Products/Release/Snipcast.app /Applications/Snipcast.app
+open /Applications/Snipcast.app
+```
+
+Check that exactly one copy is running, from `/Applications`:
+
+```bash
+pgrep -lf Snipcast.app
+```
+
+The build stays signed with the team certificate, so Screen Recording permission carries over.
+If macOS asks again, re-enable Snipcast under *Privacy & Security › Screen & System Audio
+Recording*.
 
 ## Layout
 

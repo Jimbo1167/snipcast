@@ -28,4 +28,10 @@ xcodebuild -project Snipcast.xcodeproj -scheme Snipcast -derivedDataPath build/D
 
 Capture cannot be unit-tested. To prove a capture change works, launch the built app,
 record a region, and check the file in `~/Movies/Snipcast/` (`ffprobe` or QuickTime).
+
+Before handing a build to the user to test, install it with the steps in README ›
+*Testing the latest build*: quit every running Snipcast, build Release, replace
+`/Applications/Snipcast.app`, and confirm only that copy is running. Copies in
+`build/DerivedData` (Debug and Release) and `/Applications` all register the same global
+hotkey, so a stale one can answer ⌃⇧R.
 See `docs/adr/` for the decisions behind the capture and trim pipeline.
